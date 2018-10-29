@@ -13,21 +13,21 @@ ArrayData = DataFactory('array')
 ParameterData = DataFactory('parameter')
 CifData = DataFactory('cif')
 
-structure = CifData(file=os.getcwd()+'/Cu-MOF-74.cif')
+structure = CifData(file='/home/daniele/Programs/aiida-database/frameworks/corecofs/13150N.cif')
+structure.label='13150N'
 
 cp2k_options = {
     "resources": {
         "num_machines": 2,
     },
     "max_wallclock_seconds": 1 * 60 * 60,
-    u'prepend_text': u'#SBATCH --partition=debug',
     }
 
 ddec_options = {
     "resources": {
         "num_machines": 1,
     },
-    "max_wallclock_seconds": 1 * 60 * 60 / 2,
+    "max_wallclock_seconds": 1 * 60 * 60,
     "withmpi": False,
     }
 
@@ -51,7 +51,7 @@ raspa_parameters = ParameterData(dict={
         "NumberOfInitializationCycles"     : 2000,   # 20000
 
         #"PrintEvery"                       : 10000,
-        "PrintEvery"                       : 1000,
+        "PrintEvery"                       : 100,
 
         "ChargeMethod"                     : "Ewald",
         "CutOff"                           : 12.0,
@@ -59,7 +59,7 @@ raspa_parameters = ParameterData(dict={
         "EwaldPrecision"                   : 1e-6,
 
         "Framework"                        : 0,
-        "UnitCells"                        : "1 1 1",
+        "UnitCells"                        : "1 1 1",  #TODO: needs to be expanded!
         "HeliumVoidFraction"               : 0.0,
 
         "ExternalTemperature"              : 298.0,
@@ -77,7 +77,7 @@ raspa_parameters = ParameterData(dict={
         }],
         })
 
-cp2k_code = test_and_get_code('cp2k@fidis-debug', expected_code_type='cp2k')
+cp2k_code = test_and_get_code('cp2k-5.1@fidis-debug', expected_code_type='cp2k')
 ddec_code = test_and_get_code('ddec@fidis-debug', expected_code_type='ddec')
 zeopp_code = test_and_get_code('zeopp@deneb', expected_code_type='zeopp.network')
 raspa_code = test_and_get_code('raspa@deneb', expected_code_type='raspa')
@@ -89,7 +89,7 @@ submit(Isotherm,
         structure=structure,
         probe_molecule=ParameterData(dict={"sigma":1.525}),
         pressures=pressures,
-        min_cell_size=Float(10.0),
+        min_cell_size=Float(10.0), #aiida type Float
         cp2k_code=cp2k_code,
         _cp2k_options=cp2k_options,
         ddec_code=ddec_code,

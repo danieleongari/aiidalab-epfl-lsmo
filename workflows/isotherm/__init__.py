@@ -63,7 +63,7 @@ def multiply_unit_cell (cif, threshold):
 
     # this code makes sure that the structure is replicated enough times in x, y, z direction
     # in order to be compatible with the threshold value
-    
+
     # first step is computing cell parameters according to  https://en.wikipedia.org/wiki/Fractional_coordinates
     v = sqrt(1-cos(alpha)**2-cos(beta)**2-cos(gamma)**2+2*cos(alpha)*cos(beta)*cos(gamma))
     cell=np.zeros((3,3))
@@ -134,7 +134,7 @@ class Isotherm(WorkChain):
     @classmethod
     def define(cls, spec):
         super(Isotherm, cls).define(spec)
-        
+
         # structure, adsorbant, pressures
         spec.input('structure', valid_type=CifData)
         spec.input("probe_molecule", valid_type=ParameterData)
@@ -209,7 +209,7 @@ class Isotherm(WorkChain):
         # Trying to guess the multiplicity of the system
         inputs = {
             'code'      : self.inputs.cp2k_code,
-            'structure' : new_structure, 
+            'structure' : new_structure,
             '_options'  : self.inputs._cp2k_options,
             '_label'    : "Cp2kRobustGeoOptWorkChain",
         }
@@ -219,29 +219,28 @@ class Isotherm(WorkChain):
             self.ctx.cp2k_parameters = guess_multiplicity(new_structure)
             inputs['parameters'] = self.ctx.cp2k_parameters
 
-        # uncomment for the test runs
-        # FROM HERE
-        #params_dict = ParameterData(dict={
-        #        'MOTION':{
-        #            'MD':{
-        #                'STEPS': 5,
-        #                },
-        #            'GEO_OPT': {
-        #                'MAX_ITER': 5,
-        #            },
-        #            'CELL_OPT': {
-        #                'MAX_ITER': 5,
-        #            },
-        #        },
-        #        }).store()
-        #inputs['parameters'] = merge_ParameterData(self.ctx.cp2k_parameters, params_dict)
-        # TILL HERE
+        #""" Uncomment to change the settings of the RobustGeoOpt
+        params_dict = ParameterData(dict={
+                'MOTION':{
+                    'MD':{
+                        'STEPS': 10,
+                        },
+                    'GEO_OPT': {
+                        'MAX_ITER': 10,
+                    },
+                    'CELL_OPT': {
+                        'MAX_ITER': 10,
+                    },
+                },
+                }).store()
+        inputs['parameters'] = merge_ParameterData(self.ctx.cp2k_parameters, params_dict)
+        #"""
 
         # Create the calculation process and launch it
         running = submit(Cp2kRobustGeoOptWorkChain, **inputs)
         self.report("pk: {} | Running Cp2kRobustGeoOptWorkChain to optimize geometry".format(running.pid))
         return ToContext(geo_opt_calc=Outputs(running))
-    
+
     def parse_geo_opt(self):
         """Extract optimized structure and put it into self.ctx.structure"""
         self.ctx.structure = self.ctx.geo_opt_calc['output_structure']
@@ -258,8 +257,9 @@ class Isotherm(WorkChain):
             'structure'          : self.ctx.structure,
             'cp2k_code'          : self.inputs.cp2k_code,
             'cp2k_parameters'    : self.ctx.cp2k_parameters,
-            'cp2k_parent_folder' : self.ctx.geo_opt_calc['remote_folder'],
             '_cp2k_options'      : self.inputs._cp2k_options,
+            'cp2k_parent_folder' : self.ctx.geo_opt_calc['remote_folder'],
+            #'ddec_parameters'
             'ddec_code'          : self.inputs.ddec_code,
             '_ddec_options'      : self.inputs._ddec_options,
             '_label'             : "DdecChargesWorkChain",
@@ -336,7 +336,7 @@ class Isotherm(WorkChain):
         """Extract the pressure and loading average of the last completed raspa calculation"""
         self.ctx.restart_raspa_calc = self.ctx.raspa_loading['retrieved_parent_folder']
         pressure = self.ctx.raspa_parameters['GeneralSettings']['ExternalPressure']/1e5
-        loading_average = self.ctx.raspa_loading["component_0"].dict.loading_absolute_average
+        loading_average = self.ctx.raspa_loading["component_0"].dict.loading_absolute_average #TODO: here there is a problem
         self.ctx.result.append((pressure, loading_average))
 
     def run_henry_raspa(self):

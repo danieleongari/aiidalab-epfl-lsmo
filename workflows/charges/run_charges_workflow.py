@@ -2,41 +2,40 @@ from aiida.common.example_helpers import test_and_get_code  # noqa
 from aiida.orm.data.structure import StructureData  # noqa
 from aiida.orm.data.parameter import ParameterData  # noqa
 from aiida.orm.data.base import Str
+from aiida.orm import DataFactory
 from aiida.work.run import submit
 
 from ase.io import read
-from charges import DdecChargesWorkChain
+from workflows.charges import DdecChargesWorkChain
+# data objects
+ArrayData = DataFactory('array')
+ParameterData = DataFactory('parameter')
+StructureData = DataFactory('structure')
 
-atoms = read('Fe-MOF-74_h111.xyz')
-atoms.cell = [[6.96775, 0.00000, 0.00000],
-        [-2.33067, 15.22261, 0.00000],
-        [ -2.32566, -7.57517, 13.22945]]
-
-structure = StructureData(ase=atoms)
-structure.store()
+f = read('/home/daniele/Programs/aiida-database/frameworks/corecofs/13150N.cif')
+structure = StructureData(ase=f)
+structure.label='13150N'
 
 cp2k_options_dict = {
     "resources": {
         "num_machines": 2,
     },
-    "max_wallclock_seconds": 8 * 60 * 60,
+    "max_wallclock_seconds": 1 * 60 * 60,
     }
 
 ddec_options_dict = {
     "resources": {
         "num_machines": 1,
     },
-    "max_wallclock_seconds": 8 * 60 * 60,
+    "max_wallclock_seconds": 1 * 60 * 60,
     "withmpi": False,
     }
-cp2k_options = ParameterData(dict=cp2k_options_dict)
-ddec_options = ParameterData(dict=ddec_options_dict)
-cp2k_code = test_and_get_code('cp2k@fidis', expected_code_type='cp2k')
-ddec_code = test_and_get_code('ddec@fidis', expected_code_type='ddec')
+cp2k_code = test_and_get_code('cp2k-5.1@fidis-debug', expected_code_type='cp2k')
+ddec_code = test_and_get_code('ddec@fidis-debug', expected_code_type='ddec')
 submit(DdecChargesWorkChain,
         structure=structure,
         cp2k_code=cp2k_code,
-        cp2k_options=cp2k_options,
+        _cp2k_options=cp2k_options_dict,
         ddec_code=ddec_code,
-        ddec_options=ddec_options,
+        _ddec_options=ddec_options_dict,
         ) 

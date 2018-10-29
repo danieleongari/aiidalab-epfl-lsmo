@@ -48,9 +48,8 @@ empty_pd = ParameterData(dict={}).store()
 default_ddec_options = {
     "resources": {
         "num_machines": 1,
-        "num_mpiprocs_per_machine": 1,
         },
-    "max_wallclock_seconds": 3 * 60 * 60,
+    "max_wallclock_seconds": 1 * 60 * 60,
     "withmpi": False,
     }
 
@@ -59,7 +58,7 @@ default_ddec_params = ParameterData(dict={
     "charge type"                              : "DDEC6",
     "periodicity along A, B, and C vectors"    : [True, True, True,],
     "compute BOs"                              : False,
-    "atomic densities directory complete path" : "/home/yakutovi/chargemol_09_26_2017/atomic_densities/",
+    "atomic densities directory complete path" : "/home/ongari/aiida-database/data/chargemol_09_26_2017/atomic_densities/",
     "input filename"                           : "valence_density",
     "number of core electrons"                 : [
         "1  0",
@@ -153,9 +152,12 @@ class DdecChargesWorkChain(WorkChain):
             'code'                : self.inputs.cp2k_code,
             'structure'           : self.inputs.structure,
             'parameters'          : parameters,
-            '_options'            : self.inputs._cp2k_options,
             '_label'              : 'Cp2kDftBaseWorkChain',
             }
+        try:
+            inputs['_options'] = self.inputs._cp2k_options
+        except:
+            pass
 
         try:
             inputs['parent_folder'] = self.inputs.cp2k_parent_folder
