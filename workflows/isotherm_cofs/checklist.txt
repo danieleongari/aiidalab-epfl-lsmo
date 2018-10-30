@@ -1,0 +1,18 @@
+run_{...}.py
+************
+1) computers (std/debug)
+2) walltime
+3) raspa initial parameters (molecule, MC cycles)
+4) Pressures
+5) cif path
+6) Zeo++ probe molecule
+7) threshold for the CP2K cell expansion
+8) _usecharges
+9) _gurssmultiplicity
+
+__init__.py 
+***********
+1) spin convention
+2) commented/uncommented steps
+3) steps for MD/GEO_OPT/CELL_OPT
+!) REMEMBER TO: daemon restart & rm *.pyc

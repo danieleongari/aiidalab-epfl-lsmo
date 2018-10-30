@@ -12,6 +12,8 @@ from aiida_cp2k.workflows import Cp2kRobustGeoOptWorkChain
 from aiida_raspa.workflows import RaspaConvergeWorkChain
 from aiida_zeopp.workflows import ZeoppBlockPocketsWorkChain
 
+from copy import deepcopy
+
 def dict_merge(dct, merge_dct):
     """ Taken from https://gist.github.com/angstwad/bf22d1822c38a92ec0a9
     Recursive dict merge. Inspired by :meth:``dict.update()``, instead of
@@ -46,9 +48,9 @@ RemoteData = DataFactory('remote')
 StructureData = DataFactory('structure')
 
 def multiply_unit_cell (cif, threshold):
-    '''
-
-    '''
+    """Resurns the multiplication factors (tuple of 3 int) for the cell vectors
+    that are needed to respect: min(perpendicular_width) > threshold
+    """
     from math import cos, sin, sqrt, pi
     import numpy as np
     deg2rad=pi/180.
@@ -64,9 +66,6 @@ def multiply_unit_cell (cif, threshold):
     beta  = float(struct['_cell_angle_beta'])*deg2rad
     gamma = float(struct['_cell_angle_gamma'])*deg2rad
 
-    # this code makes sure that the structure is replicated enough times in x, y, z direction
-    # in order to be compatible with the threshold value
-
     # first step is computing cell parameters according to  https://en.wikipedia.org/wiki/Fractional_coordinates
     # Note: this is the algorithm implemented in Raspa (framework.c/UnitCellBox). There also is a simpler one but it is less robust.
     v = sqrt(1-cos(alpha)**2-cos(beta)**2-cos(gamma)**2+2*cos(alpha)*cos(beta)*cos(gamma))
@@ -75,11 +74,13 @@ def multiply_unit_cell (cif, threshold):
     cell[1,:] = [b*cos(gamma), b*sin(gamma),0]
     cell[2,:] = [c*cos(beta), c*(cos(alpha)-cos(beta)*cos(gamma))/(sin(gamma)),c*v/sin(gamma)]
     cell=np.array(cell)
-
-    # diagonalizing the cell matrix
+    
+    # diagonalizing the cell matrix: note that the diagonal elements are the perpendicolar widths because ay=az=bz=0
     diag = np.diag(cell)
-    # and computing nx, ny and nz
+    
     return tuple(int(i) for i in np.ceil(threshold/diag*2.))
+
+
 
 spin = {
         "H"  : 0.0,
@@ -170,18 +171,18 @@ class Isotherm(WorkChain):
 
         # workflow
         spec.outline(
-            cls.init,
-            cls.run_geo_opt,
-            cls.parse_geo_opt,
-            if_(cls.should_use_charges)(
-                cls.run_point_charges,
+            cls.init,                    #read pressures, switch on cif charges if _usecharges=True
+            cls.run_geo_opt,             #robust 4 stesps cellopt, first expands the uc according to min_cell_size 
+            cls.parse_geo_opt,           
+            if_(cls.should_use_charges)( #if charges are needed, wfn > (E_DENSITY & core_el) > DDEC charges
+                cls.run_point_charges,   
                 cls.parse_point_charges,
             ),
-            cls.run_geom_zeopp,
-            cls.parse_geom_zeopp,
-            cls.run_henry_raspa,
-            while_(cls.should_run_loading_raspa)(
-                cls.run_loading_raspa,
+            cls.run_geom_zeopp,          #computes sa, vol, povol, res, e chan. Block pore?
+            cls.init_raspa_calc,         #assign HeliumVoidFraction=POAV and UnitCells
+            cls.run_henry_raspa,         #NumberOfInitializationCycles=0, remove ExternalPressure, WidomProbability=1
+            while_(cls.should_run_loading_raspa)( 
+                cls.run_loading_raspa,   #for each P, recover the last snapshoot of the previous and run GCMC
                 cls.parse_loading_raspa,
             ),
             cls.return_results,
@@ -202,15 +203,18 @@ class Isotherm(WorkChain):
         self.ctx.raspa_parameters = self.inputs.raspa_parameters.get_dict()
 
         if self.inputs._usecharges:
+            self.ctx.raspa_parameters['ChargeMethod'] = "Ewald"
+            self.ctx.raspa_parameters['EwaldPrecision'] = 1e-6
             self.ctx.raspa_parameters['GeneralSettings']['UseChargesFromCIFFile'] = "yes"
         self.ctx.restart_raspa_calc = None
 
     def run_geo_opt(self):
-        """Optimize geometry."""
+        """Optimize the geometry using the robust 4 steps process"""
+
+        # Expand the unit cell so that: min(perpendicular_width) > threshold
         threshold = self.inputs.min_cell_size
         new_structure = from_cif_to_structuredata(cif=self.ctx.structure, threshold=threshold)
 
-        # Trying to guess the multiplicity of the system
         inputs = {
             'code'      : self.inputs.cp2k_code,
             'structure' : new_structure,
@@ -218,11 +222,13 @@ class Isotherm(WorkChain):
             '_label'    : "Cp2kRobustGeoOptWorkChain",
         }
 
+        # Trying to guess the multiplicity of the system
         if self.inputs._guess_multiplicity:
             self.report("Guessing multiplicity")
             self.ctx.cp2k_parameters = guess_multiplicity(new_structure)
             inputs['parameters'] = self.ctx.cp2k_parameters
 
+        # Adjusting CP2K parameters
         params_dict = ParameterData(dict={
                 'MOTION':{
                     'MD':{
@@ -277,7 +283,7 @@ class Isotherm(WorkChain):
         self.ctx.structure = self.ctx.point_charges_calc['output_structure']
 
     def run_geom_zeopp(self):
-        """This is the main function that will perform a raspa calculation for the current pressure."""
+        """Zeo++ calculation for geometric properties"""
         # network parameters
         sigma = self.inputs.probe_molecule.dict.sigma
 
@@ -296,10 +302,55 @@ class Isotherm(WorkChain):
 
         return ToContext(zeopp=Outputs(running))
 
-    def parse_geom_zeopp(self):
-        """Extract the pressure and loading average of the last completed raspa calculation."""
+    def init_raspa_calc(self):
+        """Parse the output of Zeo++ and instruct the input for Raspa. """
+        # Use probe-occupiable available void fraction as the helium void fraction (for excess uptake)
         self.ctx.raspa_parameters['GeneralSettings']['HeliumVoidFraction'] = \
-        self.ctx.zeopp["output_parameters"].dict.POAV_Volume_fraction
+           self.ctx.zeopp["output_parameters"].dict.POAV_Volume_fraction
+        # Compute the UnitCells expansion considering the CutOff
+        cutoff = self.ctx.raspa_parameters['GeneralSettings']['CutOff']                           
+        ucs = multiply_unit_cell(self.ctx.structure,2*cutoff)
+        self.ctx.raspa_parameters['GeneralSettings']['UnitCells'] = "{} {} {}".format(ucs[0], ucs[1], ucs[2])
+
+    def run_henry_raspa(self):
+        """Run a Widom insertion calculation in Raspa"""
+        raspa_parameters_widom = deepcopy(self.ctx.raspa_parameters)
+
+        # Remove the pressure and InitializationCycles (not needed for Widom insertion)
+        raspa_parameters_widom['GeneralSettings'].pop('ExternalPressure')
+        raspa_parameters_widom['GeneralSettings']['NumberOfInitializationCycles'] = 0
+
+        # Switch the settings to Widom insertion
+        for i, comp in enumerate(raspa_parameters_widom['Component']):
+            name = comp['MoleculeName']
+            raspa_parameters_widom['Component'][0] = {
+                "MoleculeName"                     : name,
+                "MoleculeDefinition"               : "TraPPE",
+                "WidomProbability"                 : 1.0,
+                "CreateNumberOfMolecules"          : 0,
+            }
+
+        parameters = ParameterData(dict=raspa_parameters_widom).store()
+
+        # Create the input dictionary
+        inputs = {
+            'code'       : self.inputs.raspa_code,
+            'structure'  : self.ctx.structure,
+            'parameters' : parameters,
+            '_options'   : self.inputs._raspa_options,
+            '_label'     : "RaspaConvergeWorkChain",
+        }
+        # Check if there are poket blocks to be loaded
+        try:
+            inputs['block_component_0'] = self.ctx.zeopp['block']
+        except:
+            pass
+
+        # Create the calculation process and launch it
+        running = submit(RaspaConvergeWorkChain, **inputs)
+        self.report("pk: {} | Running raspa for the Henry coefficients".format(running.pid))
+
+        return ToContext(raspa_henry=Outputs(running))
 
     def should_run_loading_raspa(self):
         """We run another raspa calculation only if the current iteration is smaller than
@@ -320,6 +371,7 @@ class Isotherm(WorkChain):
             '_options'    : self.inputs._raspa_options,
             '_label'     : "run_loading_raspa",
         }
+        # Check if there are poket blocks to be loaded
         try:
             inputs['block_component_0'] = self.ctx.zeopp['block']
         except:
@@ -340,37 +392,7 @@ class Isotherm(WorkChain):
         pressure = self.ctx.raspa_parameters['GeneralSettings']['ExternalPressure']/1e5
         loading_average = self.ctx.raspa_loading["component_0"].dict.loading_absolute_average 
         self.ctx.result.append((pressure, loading_average))
-
-    def run_henry_raspa(self):
-        """This is the main function that will perform a raspaa calculation for the current pressure"""
-        raspa_parameters = self.inputs.raspa_parameters.get_dict()
-        raspa_parameters['GeneralSettings'].pop('ExternalPressure')
-        for i, comp in enumerate(raspa_parameters['Component']):
-            name = comp['MoleculeName']
-            raspa_parameters['Component'][0] = {
-                "MoleculeName"                     : name,
-                "MoleculeDefinition"               : "TraPPE",
-                "WidomProbability"                 : 1.0,
-                "CreateNumberOfMolecules"          : 0,
-            }
-
-        parameters = ParameterData(dict=raspa_parameters).store()
-
-        # Create the input dictionary
-        inputs = {
-            'code'       : self.inputs.raspa_code,
-            'structure'  : self.ctx.structure,
-            'parameters' : parameters,
-            '_options'   : self.inputs._raspa_options,
-            '_label'     : "RaspaConvergeWorkChain",
-        }
-
-        # Create the calculation process and launch it
-        running = submit(RaspaConvergeWorkChain, **inputs)
-        self.report("pk: {} | Running raspa for the Henry coefficients".format(running.pid))
-
-        return ToContext(raspa_henry=Outputs(running))
-
+    
     def return_results(self):
         """Attach the results of the raspa calculation and the initial structure to the outputs."""
         self.out("result", ParameterData(dict={"isotherm": self.ctx.result}).store())
