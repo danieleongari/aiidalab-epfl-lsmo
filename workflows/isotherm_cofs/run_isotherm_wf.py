@@ -27,7 +27,7 @@ cp2k_options = {
     "resources": {
         "num_machines": 2,
     },
-    "max_wallclock_seconds": 10 * 60 * 60,
+    "max_wallclock_seconds": 24 * 60 * 60,
     }
 
 ddec_options = {
@@ -65,7 +65,7 @@ raspa_parameters = ParameterData(dict={
         "HeliumVoidFraction"               : 0.0, #will be changed with POAV
 
         "ExternalTemperature"              : 298.0,
-        "ExternalPressure"                 : 58e4, #modified to compute isotherms
+        "ExternalPressure"                 : 0.0, #modified to compute isotherms
         },
         "Component":
         [{
@@ -82,10 +82,10 @@ raspa_parameters = ParameterData(dict={
 pressures = ArrayData()
 pressures.set_array("pressures", np.array([0.01e5, 0.05e5, 0.1e5, 0.15e5, 0.2e5]))
 
-all_structures = glob(path.abspath("/home/daniele/Programs/aiida-database/frameworks/corecofs/13150N.cif"))
+all_structures = glob(path.abspath("/home/daniele/Programs/aiida-database/frameworks/corecofs/13*N.cif"))
 for s in all_structures:
     structure = CifData(file=s)
-    structure.label = s.split('/')[-1]
+    structure.label = s.split('/')[-1].split('.')[0] #label = cifname
     structure.store()
 
     submit(Isotherm,

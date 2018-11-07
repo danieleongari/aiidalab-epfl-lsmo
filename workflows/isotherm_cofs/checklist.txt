@@ -1,14 +1,14 @@
 run_{...}.py
 ************
 1) computers (std/debug)
-2) walltime
-3) raspa initial parameters (molecule, MC cycles)
+2) nodes and walltime
+3) raspa initial parameters (MC cycles, temperature, molecule)
 4) Pressures
 5) cif path
-6) Zeo++ probe molecule
+6) Zeo++ probe radius
 7) threshold for the CP2K cell expansion
 8) _usecharges
-9) _gurssmultiplicity
+9) _guessmultiplicity
 
 __init__.py 
 ***********
